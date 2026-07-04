@@ -1,12 +1,12 @@
 ---
 name: code-review
-description: 对代码/diff/PR 做规范化 review,按固定清单检查空实现与占位 mock、外部 API 对接一致性、分页完整性、单测覆盖、硬编码、API 以官方文档为准拒绝瞎猜、可选参数兼容防崩溃。用户说 "review"、"检查代码"、"code review"、"审一下"、"review PR"、"审查改动" 时使用。
+description: 代码/diff/PR review 时使用;用户说 "review"、"code review"、"审一下"、"审查改动"、"检查代码" 时触发。检查空实现/mock、外部 API 一致性、分页、测试、硬编码、官方文档依据和可选参数兼容。
 ---
 
 # Code Review
 
 ## When to use
-用户要求做代码审查、检查代码、review PR、审查本次改动时触发。默认审查范围:当前 git diff(未提交 + 已暂存)。用户指定路径时只审查该范围。
+用户要求做代码审查、检查代码、review PR、审查本次改动时触发。默认审查范围:当前 git diff(未提交 + 已暂存)加上未跟踪的新文件(`git status --porcelain` 中的 `??` 条目,直接读当前文件内容)。用户指定路径时只审查该范围。
 
 ## 核查清单
 
