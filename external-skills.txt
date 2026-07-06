@@ -1,0 +1,10 @@
+# External skill sources, installed by install.sh alongside local skills.
+# Format (full-line comments only):
+#   <alias> <git-url> [subdir] [top-level-dirs...]
+# subdir may be "." (repo root) — use it as a placeholder when you want the
+# top-level-dirs filter but the skills live at the repo root.
+# Cloned into .external/<alias> (gitignored); every run refreshes to the
+# upstream tip. Name collisions: local skills win, then earlier lines here.
+# NOTE: external skills are executed as agent instructions and track their
+# upstream — point at a fork you control if you want to pin content.
+mattpocock https://github.com/mattpocock/skills skills engineering productivity

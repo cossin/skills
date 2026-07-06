@@ -9,6 +9,11 @@
 #                     native skill support
 #
 # Also mirrors each skill to ~/skills/<name> as a CLI-agnostic path.
+#
+# Besides the skills in this repo, external skill repos listed in
+# external-skills.txt are cloned into .external/ (gitignored) and linked the
+# same way. Local skills win on name collisions.
+#
 # Idempotent: re-runs sync added/removed skills without breaking unrelated links.
 # Tests: tests/install_test.sh (sandboxed, never touches the real $HOME).
 
@@ -21,6 +26,8 @@ CLAUDE_DIR="$HOME/.claude/skills"
 AGENTS_DIR="$HOME/.agents/skills"
 CODEX_DIR="$HOME/.codex/skills"
 GEMINI_FILE="$HOME/.gemini/GEMINI.md"
+EXTERNAL_MANIFEST="$REPO_DIR/external-skills.txt"
+EXTERNAL_DIR="$REPO_DIR/.external"
 
 BEGIN_MARK="<!-- managed-skills:begin -->"
 END_MARK="<!-- managed-skills:end -->"
@@ -109,26 +116,142 @@ frontmatter_field() {
   ' "$file"
 }
 
-# --- discover skills -------------------------------------------------------
+# --- discover local skills ---------------------------------------------------
 
 skills=()
+skill_srcs=()
 for dir in "$REPO_DIR"/*/; do
   [ -f "${dir}SKILL.md" ] || continue
   skills+=("$(basename "$dir")")
+  skill_srcs+=("${dir%/}")
 done
 
 if [ "${#skills[@]}" -eq 0 ]; then
   # Keep going: stale links and the GEMINI.md block still need syncing.
-  echo "No skills found in $REPO_DIR (expected <name>/SKILL.md); cleaning up."
+  echo "No local skills found in $REPO_DIR (expected <name>/SKILL.md)."
 else
-  echo "Found ${#skills[@]} skill(s): ${skills[*]}"
+  echo "Found ${#skills[@]} local skill(s): ${skills[*]}"
+fi
+
+# --- external skill sources --------------------------------------------------
+# external-skills.txt format, one source per line (full-line # comments only):
+#   <alias> <git-url> [subdir] [top-level-dirs...]
+# Skills are discovered as <subdir>/<name>/SKILL.md and
+# <subdir>/<category>/<name>/SKILL.md; when top-level dirs are listed, only
+# those categories are installed. Pass "." as the subdir placeholder when the
+# skills live at the repo root but you still want the category filter.
+# Collisions: local skills win, then earlier manifest lines; skipped names
+# are warned about. Every run refreshes the checkout to the upstream tip.
+
+if [ -f "$EXTERNAL_MANIFEST" ]; then
+  mkdir -p "$EXTERNAL_DIR"
+  while IFS= read -r ext_line || [ -n "$ext_line" ]; do
+    # strip CR so CRLF manifests don't leak \r into the last field
+    ext_line="${ext_line%$'\r'}"
+    ext_alias='' ext_url='' ext_subdir='' ext_includes=''
+    IFS=' 	' read -r ext_alias ext_url ext_subdir ext_includes <<EOF_LINE || true
+$ext_line
+EOF_LINE
+    case "$ext_alias" in ''|'#'*) continue ;; esac
+    if [ -z "$ext_url" ]; then
+      echo "WARN: skipping malformed line in external-skills.txt: $ext_alias" >&2
+      continue
+    fi
+    case "$ext_alias" in
+      .|..|*[!A-Za-z0-9._-]*)
+        echo "WARN: skipping source with unsafe alias: $ext_alias" >&2
+        continue
+        ;;
+    esac
+    case "$ext_subdir" in
+      /*|..|../*|*/..|*/../*)
+        echo "WARN: skipping source with unsafe subdir: $ext_alias $ext_subdir" >&2
+        continue
+        ;;
+    esac
+
+    echo
+    echo "[external: $ext_alias]"
+    checkout="$EXTERNAL_DIR/$ext_alias"
+    # </dev/null keeps git off our stdin (the manifest) and off the tty;
+    # GIT_TERMINAL_PROMPT=0 fails fast instead of prompting for credentials
+    if [ -d "$checkout/.git" ]; then
+      current_url="$(git -C "$checkout" config remote.origin.url 2>/dev/null || true)"
+      if [ "$current_url" != "$ext_url" ]; then
+        echo "  url changed, rebuilding: $checkout"
+        rm -rf "$checkout"
+      # fetch the remote default branch and hard-reset to it: survives
+      # upstream force-pushes and branch renames, where a ff-only pull
+      # would wedge the checkout forever; offline keeps the old content
+      elif GIT_TERMINAL_PROMPT=0 git -C "$checkout" fetch --depth 1 --quiet origin HEAD </dev/null 2>/dev/null \
+        && git -C "$checkout" reset --hard --quiet FETCH_HEAD </dev/null 2>/dev/null; then
+        echo "  updated: $checkout"
+      else
+        echo "  WARN (cannot update, using existing checkout): $checkout" >&2
+      fi
+    elif [ -e "$checkout" ]; then
+      echo "  removing broken checkout (no .git): $checkout"
+      rm -rf "$checkout"
+    fi
+    if [ ! -e "$checkout" ]; then
+      if ! GIT_TERMINAL_PROMPT=0 git clone --depth 1 --quiet "$ext_url" "$checkout" </dev/null; then
+        echo "  FAILED (cannot clone): $ext_url" >&2
+        failures=$((failures + 1))
+        continue
+      fi
+      echo "  cloned:  $checkout"
+    fi
+
+    src_root="$checkout"
+    if [ -n "$ext_subdir" ] && [ "$ext_subdir" != "." ]; then
+      src_root="$checkout/$ext_subdir"
+    fi
+    if [ ! -d "$src_root" ]; then
+      echo "  FAILED (no such subdir in checkout): ${ext_subdir:-.}" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+
+    added=0
+    skipped=0
+    for skill_md in "$src_root"/*/SKILL.md "$src_root"/*/*/SKILL.md; do
+      [ -f "$skill_md" ] || continue
+      sdir="$(dirname "$skill_md")"
+      sname="$(basename "$sdir")"
+      rel="${sdir#"$src_root"/}"
+      top="${rel%%/*}"
+      if [ -n "$ext_includes" ]; then
+        # literal membership test; a for-loop over $ext_includes would let
+        # the shell glob-expand entries against the caller's cwd
+        inc_norm=" ${ext_includes//	/ } "
+        case "$inc_norm" in
+          *" $top "*) ;;
+          *) continue ;;
+        esac
+      fi
+      taken=0
+      for existing in ${skills[@]+"${skills[@]}"}; do
+        [ "$existing" = "$sname" ] && { taken=1; break; }
+      done
+      if [ "$taken" -eq 1 ]; then
+        echo "  SKIP (name already taken): $ext_alias/$rel" >&2
+        skipped=$((skipped + 1))
+        continue
+      fi
+      skills+=("$sname")
+      skill_srcs+=("$sdir")
+      added=$((added + 1))
+    done
+    echo "  found $added skill(s), skipped $skipped"
+  done < "$EXTERNAL_MANIFEST"
 fi
 echo
 
 # --- link into each target -------------------------------------------------
 
-for name in ${skills[@]+"${skills[@]}"}; do
-  src="$REPO_DIR/$name"
+for i in ${skills[@]+"${!skills[@]}"}; do
+  name="${skills[$i]}"
+  src="${skill_srcs[$i]}"
   echo "[$name]"
   link "$src" "$SKILLS_DIR/$name" || failures=$((failures + 1))
   link "$src" "$CLAUDE_DIR/$name" || failures=$((failures + 1))
@@ -156,8 +279,9 @@ case "$SKILLS_DIR" in
 esac
 
 {
-  for name in ${skills[@]+"${skills[@]}"}; do
-    desc="$(frontmatter_field description "$REPO_DIR/$name/SKILL.md" || true)"
+  for i in ${skills[@]+"${!skills[@]}"}; do
+    name="${skills[$i]}"
+    desc="$(frontmatter_field description "${skill_srcs[$i]}/SKILL.md" || true)"
     [ -n "$desc" ] || desc="(no description)"
     echo "## $name"
     echo "$desc"

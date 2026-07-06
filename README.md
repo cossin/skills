@@ -21,6 +21,10 @@ cd ~/repositories/skills
 - `~/.codex/skills/<name>` — 旧版 Codex 的兼容路径
 - `~/skills/<name>` — CLI 无关路径,方便其他工具引用
 
+**外部 skill 源**:[external-skills.txt](external-skills.txt) 里列出的外部 git 仓库会在安装时自动 clone/更新到 `.external/`(已 gitignore),其中的 skill 与本地 skill 一起链接到上述路径。每行格式 `<别名> <git地址> [子目录] [只装哪些顶层分类...]`,子目录可写 `.` 占位(skill 在仓库根但需要分类过滤时)。重名优先级:**本地 skill > 清单中靠前的源**,被跳过的会告警。默认配置了 [mattpocock/skills](https://github.com/mattpocock/skills)(MIT)的 engineering + productivity 两个分类,改那一行即可增删分类或整个源;URL 改了会自动重建 checkout,上游 force-push/改分支名也能跟上,离线时沿用已有 checkout 并告警。
+
+> 信任提示:外部 skill 的正文会被 agent 当作指令执行,且每次运行 install.sh 都会拉取上游最新内容——相当于持续信任该仓库的维护者。想锁定内容,fork 一份换成自己的地址。
+
 **旧版 Gemini**(无原生 skill 支持)走兼容方案:`install.sh` 在 `~/.gemini/GEMINI.md` 里维护一个受管理 block(用 `<!-- managed-skills:begin -->` / `<!-- managed-skills:end -->` 标记),列出所有 skill 并指向 `~/skills/<name>/SKILL.md`。block 之外的内容不会被改动;标记不成对(只剩其一)、重复、顺序错误或被空白/CRLF 污染时脚本直接报错退出,不改写文件。
 
 ## 目录结构
@@ -57,7 +61,7 @@ tests/install_test.sh
 
 ## 卸载
 
-从 repo 里删除对应的 `<name>/` 目录,重新运行 `./install.sh`:相关链接会作为 stale 被清理,GEMINI.md 的 block 同步更新(删光全部 skill 再运行同样生效)。手动也可:
+本地 skill:从 repo 里删除对应的 `<name>/` 目录,重新运行 `./install.sh`,相关链接会作为 stale 被清理,GEMINI.md 的 block 同步更新(删光全部 skill 再运行同样生效)。外部 skill:编辑 `external-skills.txt` 删掉分类或整行后重跑即可;残留的 `.external/<别名>/` checkout 可手动删除。手动也可:
 
 ```bash
 rm ~/.claude/skills/<name> ~/.agents/skills/<name> ~/.codex/skills/<name> ~/skills/<name>

@@ -27,13 +27,15 @@ check() { # check <desc> <command...>  — command's exit code decides pass/fail
 }
 
 # new_env <case-name> — fresh repo copy + empty fake home; sets $H, $R, $CASE_DIR
+# Drops the external-skills manifest and checkouts so no test hits the network.
 new_env() {
   CASE_DIR="$TEST_ROOT/$1"
   H="$CASE_DIR/home"
   R="$CASE_DIR/repo"
   mkdir -p "$H"
   cp -R "$REPO_SRC" "$R"
-  rm -rf "$R/.git"
+  rm -rf "$R/.git" "$R/.external"
+  rm -f "$R/external-skills.txt"
 }
 
 # run_install — runs install.sh with the fake home; captures out/err/rc
@@ -258,6 +260,131 @@ run_install
 check "exits 0" rc_is 0
 check "substring line preserved" gemini_has "note: $BEGIN_MARK is a marker"
 check "a real block was appended" bash -c "grep -qxF '$BEGIN_MARK' '$H/.gemini/GEMINI.md'"
+
+echo "[external source: clone, category filter, collision]"
+new_env external
+EXT="$CASE_DIR/extsrc"
+mkdir -p "$EXT/skills/cat1/ext-alpha" "$EXT/skills/cat1/code-review" "$EXT/skills/cat2/ext-beta"
+printf -- '---\nname: ext-alpha\ndescription: ext alpha skill\n---\n' > "$EXT/skills/cat1/ext-alpha/SKILL.md"
+printf -- '---\nname: code-review\ndescription: colliding skill\n---\n' > "$EXT/skills/cat1/code-review/SKILL.md"
+printf -- '---\nname: ext-beta\ndescription: ext beta skill\n---\n' > "$EXT/skills/cat2/ext-beta/SKILL.md"
+git -C "$EXT" init -q
+git -C "$EXT" add -A
+git -C "$EXT" -c user.name=t -c user.email=t@t commit -qm init
+printf 'ext file://%s skills cat1\n' "$EXT" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "included category linked" links_to_repo "$H/.claude/skills/ext-alpha" "$R/.external/ext/skills/cat1/ext-alpha"
+check "excluded category not linked" test ! -e "$H/.claude/skills/ext-beta"
+check "collision: local code-review wins" links_to_repo "$H/.claude/skills/code-review" "$R/code-review"
+check "collision warning printed" grep -qF "name already taken" "$CASE_DIR/err"
+check "GEMINI.md lists external skill" gemini_has "## ext-alpha"
+check "GEMINI.md uses external description" gemini_has "ext alpha skill"
+run_install
+check "re-run exits 0" rc_is 0
+check "re-run took the update path" out_has "  updated: "
+check "re-run reports ok" out_has "  ok:      $H/.claude/skills/ext-alpha"
+rm "$R/external-skills.txt"
+run_install
+check "manifest removed: exits 0" rc_is 0
+check "external link cleaned as stale" test ! -e "$H/.claude/skills/ext-alpha"
+check "GEMINI.md entry removed" bash -c "! grep -qF '## ext-alpha' '$H/.gemini/GEMINI.md'"
+
+# mk_ext_repo <root> <name>... — git repo with skills/cat1/<name> for each name
+mk_ext_repo() {
+  local root="$1"; shift
+  local n
+  for n in "$@"; do
+    mkdir -p "$root/skills/cat1/$n"
+    printf -- '---\nname: %s\ndescription: %s v1\n---\n' "$n" "$n" > "$root/skills/cat1/$n/SKILL.md"
+  done
+  git -C "$root" init -q
+  git -C "$root" add -A
+  git -C "$root" -c user.name=t -c user.email=t@t commit -qm init
+}
+
+echo "[external source: manifest url change rebuilds the checkout]"
+new_env exturl
+mk_ext_repo "$CASE_DIR/srcA" ext-a1
+mk_ext_repo "$CASE_DIR/srcB" ext-b1
+printf 'ext file://%s skills\n' "$CASE_DIR/srcA" > "$R/external-skills.txt"
+run_install
+printf 'ext file://%s skills\n' "$CASE_DIR/srcB" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "rebuild message printed" out_has "url changed, rebuilding"
+check "new source skill linked" test -L "$H/.claude/skills/ext-b1"
+check "old source skill cleaned as stale" test ! -e "$H/.claude/skills/ext-a1"
+
+echo "[external source: CRLF manifest still works]"
+new_env extcrlf
+mk_ext_repo "$CASE_DIR/src" ext-c1
+printf 'ext file://%s skills cat1\r\n' "$CASE_DIR/src" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "skill from CRLF manifest linked" test -L "$H/.claude/skills/ext-c1"
+
+echo "[external source: broken checkout self-heals]"
+new_env extjunk
+mk_ext_repo "$CASE_DIR/src" ext-j1
+mkdir -p "$R/.external/ext/leftover"
+printf 'ext file://%s skills\n' "$CASE_DIR/src" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "broken checkout replaced" out_has "removing broken checkout"
+check "skill linked after self-heal" test -L "$H/.claude/skills/ext-j1"
+
+echo "[external source: force-push and branch rename are followed]"
+new_env extforce
+mk_ext_repo "$CASE_DIR/src" ext-f1
+printf 'ext file://%s skills\n' "$CASE_DIR/src" > "$R/external-skills.txt"
+run_install
+printf -- '---\nname: ext-f1\ndescription: ext-f1 v2\n---\n' > "$CASE_DIR/src/skills/cat1/ext-f1/SKILL.md"
+git -C "$CASE_DIR/src" add -A
+git -C "$CASE_DIR/src" -c user.name=t -c user.email=t@t commit -q --amend -m rewritten
+run_install
+check "force-push: exits 0" rc_is 0
+check "force-push: took the update path" out_has "  updated: "
+check "force-push: new content visible" grep -qF "ext-f1 v2" "$H/.claude/skills/ext-f1/SKILL.md"
+def_branch="$(git -C "$CASE_DIR/src" symbolic-ref --short HEAD)"
+git -C "$CASE_DIR/src" branch -m "$def_branch" renamed-trunk
+run_install
+check "branch rename: exits 0" rc_is 0
+check "branch rename: took the update path" out_has "  updated: "
+
+echo "[external source: include filter is literal, not glob]"
+new_env extglob
+mk_ext_repo "$CASE_DIR/src" ext-g1
+printf 'ext file://%s skills c*\n' "$CASE_DIR/src" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "glob include does not match cat1" test ! -e "$H/.claude/skills/ext-g1"
+
+echo "[external source: unsafe subdir is rejected]"
+new_env extsub
+mk_ext_repo "$CASE_DIR/src" ext-s1
+printf 'ext file://%s ../../.. cat1\n' "$CASE_DIR/src" > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "unsafe subdir warning" grep -qF "unsafe subdir" "$CASE_DIR/err"
+check "nothing linked from unsafe subdir" test ! -e "$H/.claude/skills/ext-s1"
+
+echo "[external source: clone failure doesn't break local install]"
+new_env extbad
+printf 'bad file://%s/does-not-exist skills\n' "$CASE_DIR" > "$R/external-skills.txt"
+run_install
+check "exits non-zero" test "$(cat "$CASE_DIR/rc")" != "0"
+check "FAILED clone message" grep -qF "FAILED (cannot clone)" "$CASE_DIR/err"
+check "local skills still installed" links_to_repo "$H/.claude/skills/code-review" "$R/code-review"
+check "GEMINI.md still written" gemini_has "## code-review"
+
+echo "[external source: unsafe alias is rejected]"
+new_env extalias
+printf '../evil file:///tmp/x skills\n' > "$R/external-skills.txt"
+run_install
+check "exits 0" rc_is 0
+check "unsafe alias warning" grep -qF "unsafe alias" "$CASE_DIR/err"
+check "nothing cloned outside .external" test ! -e "$R/evil"
 
 echo "[symlinked GEMINI.md stays a symlink]"
 new_env gsymlink
