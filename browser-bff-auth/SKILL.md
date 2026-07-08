@@ -68,7 +68,7 @@ BFF(后端:Worker / Node / 边缘函数)
 - `state` 参数存中转态并校验,挡 CSRF/串话。
 - CSRF:`SameSite=Lax` + 同源 `fetch`(自定义头、非表单)基本足够;高危写操作可再加 CSRF token 或校验 `Origin`。
 - 登出:清服务端会话 + 过期 cookie(`Max-Age=0`)+ 跳 IdP `end_session`(带 `id_token_hint` + `post_logout_redirect_uri`)结束 SSO。
-- 会话上限由 IdP 的(离线)会话空闲/最大时长控;offline_access → 长会话滑动。
+- 会话时长由 IdP 的 **SSO Session Idle/Max** 控(app 会话 = SSO 会话,BFF 惰性刷新即滑动)。**BFF 一般不用 `offline_access`**——那是给独立于浏览器的后台/移动端的,还会留"登出后 token 仍存活"的尾巴,且常触发 IdP 的 offline 限制;要超长会话直接把 SSO Session Idle/Max 调大。
 
 ## 请求流
 
