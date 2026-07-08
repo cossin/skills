@@ -40,6 +40,7 @@ cd ~/repositories/skills
 ## 现有 skill
 
 - **admin-management-design** — 后台管理系统设计/实现规范:默认 Lark 海外版登录、侧栏 + 面包屑布局,创建和修改数据默认使用 modal。
+- **browser-bff-auth** — 浏览器 SPA 的 OAuth/OIDC 鉴权 BFF(BCP)方案:token 只在服务端、浏览器只拿 HttpOnly cookie,消除 XSS 窃 token 与多标签刷新竞争;Cloudflare Worker + Durable Object 落地与实现清单。
 - **code-review** — 代码 review 清单:空实现与占位 mock、外部 API 对接一致性、分页完整性、单测覆盖、硬编码、官方文档依据、可选参数兼容。
 - **deployment-planning** — 部署/上线/发布计划:无损升级、滚动发布、灰度发布、数据库迁移、旧数据兼容、存量数据处理和回滚方案。
 - **root-cause-analysis** — 问题分析/根因分析:基于事实、日志、代码和时间线定位根因。
