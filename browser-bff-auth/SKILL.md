@@ -16,7 +16,7 @@ description: 浏览器应用(SPA)接入 OAuth/OIDC 登录时使用。BFF(BCP 最
 **只要应用有后端(哪怕是个薄 Worker),就用 BFF,不要把 token 交给浏览器 JS。**
 
 1. token(access + refresh)只存**服务端**;OAuth code 交换、刷新、登出全在服务端做。
-2. 浏览器只拿一个**不透明会话 cookie**:`HttpOnly` + `Secure` + `SameSite=Lax` + `Path=/`。JS 读不到 → XSS 偷不到 token。
+2. 浏览器只拿**不透明 cookie**:登录中转态只用于 callback,登录后 `sid` 用 `HttpOnly` + `Secure` + `SameSite=Strict` + `Path=/`。JS 读不到 → XSS 偷不到 token。
 3. 前端调**同源** `/api/*`(cookie 自动带),BFF 服务端按会话取 token、附 `Authorization: Bearer` 代理到上游。前端零 token、零 CORS(同源)。
 4. 登录态由 `/auth/me` 返回(用户名/角色,**不含 token**)。
 
@@ -27,7 +27,7 @@ description: 浏览器应用(SPA)接入 OAuth/OIDC 登录时使用。BFF(BCP 最
    │  整页跳转 /auth/login、/auth/logout;同源 fetch /auth/me、/api/*
    ▼
 BFF(后端:Worker / Node / 边缘函数)
-   ├─ /auth/login    起 PKCE、下发 sid cookie、302 跳 IdP
+   ├─ /auth/login    起 PKCE、下发 pre-auth cookie/handle、302 跳 IdP
    ├─ /auth/callback  服务端用 code+verifier 换 token、建会话、302 回 /
    ├─ /auth/me        从会话返回 { authenticated, username, roles }
    ├─ /auth/logout    清会话 + 清 cookie + 跳 IdP end_session
@@ -62,11 +62,14 @@ BFF(后端:Worker / Node / 边缘函数)
 
 ## 安全要点
 
-- Cookie:`HttpOnly`(挡 XSS 读取)、`Secure`(仅 HTTPS)、`SameSite=Lax`(**必须 Lax**,否则从 IdP 302 回 `/auth/callback` 时 cookie 不带、拿不到中转态)、`Path=/`。
+- Cookie 分层:
+  - 登录中转态 cookie/handle:只保存 `verifier/state/nonce` 的引用,可用 `SameSite=Lax` 兼容 IdP 顶层 302 回 `/auth/callback`;换到 token 后立即删除。
+  - 登录后 `sid` 会话 cookie:`HttpOnly`(挡 XSS 读取)、`Secure`(仅 HTTPS)、`SameSite=Strict`、`Path=/`,不要设置 `Domain`;如因跨站部署必须放宽,必须写明风险和补偿控制。
 - sid 用 CSPRNG 随机(≥128 bit),映射服务端会话;别把任何 token 放进 cookie。
-- PKCE 在服务端做:verifier 存"登录中转态"(pre-auth,换到 token 后删),挡授权码注入。public client(无 secret)即可;或用 confidential client、secret 只在 BFF。
+- BFF 必须作为 **confidential client**:client secret/私钥只放服务端(如 Worker secret binding),并使用 Authorization Code + PKCE;无法安全持有 client credential 时,标为非 BCP 偏离。
+- PKCE 在服务端做:verifier 存"登录中转态"(pre-auth,换到 token 后删),挡授权码注入。
 - `state` 参数存中转态并校验,挡 CSRF/串话。
-- CSRF:`SameSite=Lax` + 同源 `fetch`(自定义头、非表单)基本足够;高危写操作可再加 CSRF token 或校验 `Origin`。
+- CSRF 必须强制防护:`/api/*` 写操作至少校验 `Origin`/`Sec-Fetch-Site` + 自定义非 safelisted header,拒绝表单可发起的 safelisted 请求;高危场景再加同步器 CSRF token。
 - 登出:清服务端会话 + 过期 cookie(`Max-Age=0`)+ 跳 IdP `end_session`(带 `id_token_hint` + `post_logout_redirect_uri`)结束 SSO。
 - 会话时长由 IdP 的 **SSO Session Idle/Max** 控(app 会话 = SSO 会话,BFF 惰性刷新即滑动)。**BFF 一般不用 `offline_access`**——那是给独立于浏览器的后台/移动端的,还会留"登出后 token 仍存活"的尾巴,且常触发 IdP 的 offline 限制;要超长会话直接把 SSO Session Idle/Max 调大。
 
@@ -74,20 +77,20 @@ BFF(后端:Worker / Node / 边缘函数)
 
 ```mermaid
 sequenceDiagram
-  participant B as 浏览器(sid cookie)
+  participant B as 浏览器(HttpOnly cookies)
   participant F as BFF
   participant S as 会话存储(DO/KV)
   participant I as IdP(Keycloak)
   participant U as 上游 API
   B->>F: GET /auth/login
   F->>S: 存 {verifier,state}
-  F-->>B: 302→IdP + Set-Cookie sid(HttpOnly)
+  F-->>B: 302→IdP + Set-Cookie pre-auth handle(HttpOnly)
   B->>I: 授权(PKCE)
   I-->>B: 302 /auth/callback?code&state
-  B->>F: GET /auth/callback (带 sid)
+  B->>F: GET /auth/callback (带 pre-auth handle)
   F->>I: code+verifier 换 token(服务端)
   F->>S: 存 {access,refresh,exp,profile}
-  F-->>B: 302 /
+  F-->>B: Set-Cookie sid(Strict) + 302 /
   B->>F: GET /api/compass/prices (带 sid)
   F->>S: 取会话;过期?→单飞刷新
   F->>U: 附 Bearer 代理
@@ -98,11 +101,13 @@ sequenceDiagram
 ## 实现清单(生产级,别留 TODO)
 
 后端(BFF):
-- [ ] `/auth/login`:CSPRNG sid → 存中转态(verifier/state)→ Set-Cookie(HttpOnly/Secure/SameSite=Lax)→ 302 IdP。
-- [ ] `/auth/callback`:校验 state → 服务端换 token → 建会话 → 删中转态 → 302 `/`;失败带 `?login_error=` 回 `/`。
+- [ ] `/auth/login`:CSPRNG pre-auth handle → 存中转态(verifier/state/nonce)→ Set-Cookie(HttpOnly/Secure/SameSite=Lax)→ 302 IdP。
+- [ ] `/auth/callback`:校验 state → 服务端换 token → 建会话 → 下发 `sid`(HttpOnly/Secure/SameSite=Strict)→ 删中转态 → 302 `/`;失败带 `?login_error=` 回 `/`。
 - [ ] `/auth/me`:返回 `{authenticated, username, roles}`,`Cache-Control: no-store`。
 - [ ] `/auth/logout`:清会话 + 过期 cookie + 跳 IdP end_session。
-- [ ] `/api/*`:取 token(惰性刷新+单飞)→ 附 Bearer 代理到上游;401 时清 cookie。
+- [ ] `/api/*`:取 token(惰性刷新+单飞)→ 附 Bearer 代理到上游;401 后刷新并重试一次,refresh 失败或重试仍 401 才删会话/清 cookie。
+- [ ] 代理安全:固定路由映射到允许的 upstream host/path/method,禁止把用户输入直接拼成目标 URL;动态 path 必须逐段校验。
+- [ ] CSRF:所有 cookie 鉴权的写接口校验 `Origin`/`Sec-Fetch-Site` + 自定义 header;拒绝 safelisted/form POST 绕过。
 - [ ] 存储:DO 绑定/KV + 迁移;刷新失败删会话;`refresh_token` 不回传时沿用旧值。
 - [ ] 错误分支:IdP 不可达、code 交换失败、refresh 被撤、cookie 缺失、未知 `/api` 前缀,全部显式处理。
 
@@ -126,7 +131,7 @@ sequenceDiagram
 
 - 前端默认 Cloudflare Worker 托管 + GitHub push 自动部署;BFF 即把这个 Worker 从"薄壳"升为有状态代理。
 - 会话存储默认 **Durable Object**(强一致 + 免费单飞;CF 上用 SQLite-backed DO,migration 写 `new_sqlite_classes`,**免费档即可**);其它平台用单实例 KV/Redis + 锁并说明取舍。
-- IdP 默认复用现有(如 Keycloak);client 用 public + PKCE(BFF 服务端做),避免额外 secret 管理。
+- IdP 默认复用现有(如 Keycloak);client 用 confidential + PKCE(BFF 服务端做),client secret 走平台 secret 管理。
 
 ## 落地参考
 
