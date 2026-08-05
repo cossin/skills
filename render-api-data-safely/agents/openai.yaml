@@ -1,0 +1,4 @@
+interface:
+  display_name: "Render API Data Safely"
+  short_description: "等待真实接口数据后再渲染，避免默认值、假数据与空态闪现"
+  default_prompt: "Use $render-api-data-safely to make this frontend render only real API data with explicit loading, error, empty, and success states."

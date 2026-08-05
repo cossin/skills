@@ -44,6 +44,7 @@ cd ~/repositories/skills
 - **code-review** — 代码 review 清单:空实现与占位 mock、外部 API 对接一致性、分页完整性、单测覆盖、硬编码、官方文档依据、可选参数兼容。
 - **deployment-planning** — 部署/上线/发布计划:无损升级、滚动发布、灰度发布、数据库迁移、旧数据兼容、存量数据处理和回滚方案。
 - **root-cause-analysis** — 问题分析/根因分析:基于事实、日志、代码和时间线定位根因。
+- **render-api-data-safely** — 前端异步数据展示规范:等待真实接口响应，显式区分 loading/error/empty/success，禁止默认业务值、假数据和初始空值抢先渲染。
 - **system-architecture-design** — 系统/架构/方案设计:技术方案、RFC/ADR、迁移方案、架构评审;默认 PostgreSQL,Web 前端默认 Cloudflare Worker + GitHub push 自动部署。
 
 ## 新增一个 skill
