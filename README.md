@@ -21,7 +21,7 @@ cd ~/repositories/skills
 - `~/.codex/skills/<name>` — 旧版 Codex 的兼容路径
 - `~/skills/<name>` — CLI 无关路径,方便其他工具引用
 
-**外部 skill 源**:[external-skills.txt](external-skills.txt) 里列出的外部 git 仓库会在安装时自动 clone/更新到 `.external/`(已 gitignore),其中的 skill 与本地 skill 一起链接到上述路径。每行格式 `<别名> <git地址> [子目录] [只装哪些顶层分类...]`,子目录可写 `.` 占位(skill 在仓库根但需要分类过滤时)。重名优先级:**本地 skill > 清单中靠前的源**,被跳过的会告警。默认配置了 [mattpocock/skills](https://github.com/mattpocock/skills)(MIT)的 engineering + productivity 两个分类,改那一行即可增删分类或整个源;URL 改了会自动重建 checkout,上游 force-push/改分支名也能跟上,离线时沿用已有 checkout 并告警。
+**外部 skill 源**:[external-skills.txt](external-skills.txt) 里列出的外部 git 仓库会在安装时自动 clone/更新到 `.external/`(已 gitignore),其中的 skill 与本地 skill 一起链接到上述路径。每行格式 `<别名> <git地址> [子目录] [只装哪些顶层分类...]`,子目录可写 `.` 占位(skill 在仓库根但需要分类过滤时)。重名优先级:**本地 skill > 清单中靠前的源**,被跳过的会告警。当前未配置外部来源;需要时可显式添加,删除来源后重新安装会清理其安装链接。URL 改了会自动重建 checkout,上游 force-push/改分支名也能跟上,离线时沿用已有 checkout 并告警。
 
 > 信任提示:外部 skill 的正文会被 agent 当作指令执行,且每次运行 install.sh 都会拉取上游最新内容——相当于持续信任该仓库的维护者。想锁定内容,fork 一份换成自己的地址。
 
@@ -39,14 +39,9 @@ cd ~/repositories/skills
 
 ## 现有 skill
 
-- **admin-management-design** — 后台管理系统设计/实现规范:默认 Lark 海外版登录、侧栏 + 面包屑布局,创建和修改数据默认使用 modal。
+- **design-and-implementation** — 设计与实现原则:以业务目标和风险为依据,复用现有系统,明确业务不变量、一致性边界、失败恢复和实际验证,控制复杂度与总成本。
 - **browser-bff-auth** — 浏览器 SPA 的 OAuth/OIDC 鉴权 BFF(BCP)方案:token 只在服务端、浏览器只拿 HttpOnly cookie,消除 XSS 窃 token 与多标签刷新竞争;Cloudflare Worker + Durable Object 落地与实现清单。
-- **code-review** — 代码 review 清单:空实现与占位 mock、外部 API 对接一致性、分页完整性、单测覆盖、硬编码、官方文档依据、可选参数兼容。
-- **decision-tradeoffs** — 决策取舍:先写业界成熟系统通常怎么做、建议是否一致,偏离必须给理由;交易/风控按敞口方向限、状态不明时按已知状态继续交易不冻结对冲。
-- **deployment-planning** — 部署/上线/发布计划:无损升级、滚动发布、灰度发布、数据库迁移、旧数据兼容、存量数据处理和回滚方案。
-- **root-cause-analysis** — 问题分析/根因分析:基于事实、日志、代码和时间线定位根因。
 - **render-api-data-safely** — 前端异步数据展示规范:等待真实接口响应，显式区分 loading/error/empty/success，禁止默认业务值、假数据和初始空值抢先渲染。
-- **system-architecture-design** — 系统/架构/方案设计:技术方案、RFC/ADR、迁移方案、架构评审;默认 PostgreSQL,Web 前端默认 Cloudflare Worker + GitHub push 自动部署。
 
 ## 新增一个 skill
 
