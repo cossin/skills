@@ -36,6 +36,9 @@ new_env() {
   cp -R "$REPO_SRC" "$R"
   rm -rf "$R/.git" "$R/.external"
   rm -f "$R/external-skills.txt"
+  # Use a test-owned skill so cases do not depend on the installed catalog.
+  mkdir -p "$R/fixture-skill"
+  printf -- '---\nname: fixture-skill\ndescription: installer test fixture\n---\n' > "$R/fixture-skill/SKILL.md"
 }
 
 # run_install — runs install.sh with the fake home; captures out/err/rc
@@ -61,12 +64,12 @@ new_env fresh
 run_install
 check "exits 0" rc_is 0
 for d in skills .claude/skills .agents/skills .codex/skills; do
-  check "code-review linked in ~/$d" links_to_repo "$H/$d/code-review" "$R/code-review"
+  check "fixture-skill linked in ~/$d" links_to_repo "$H/$d/fixture-skill" "$R/fixture-skill"
 done
 check "GEMINI.md has begin marker" gemini_has "$BEGIN_MARK"
 check "GEMINI.md has end marker" gemini_has "$END_MARK"
-check "GEMINI.md lists code-review" gemini_has "## code-review"
-check "GEMINI.md points at ~/skills path" gemini_has "~/skills/code-review/SKILL.md"
+check "GEMINI.md lists fixture-skill" gemini_has "## fixture-skill"
+check "GEMINI.md points at ~/skills path" gemini_has "~/skills/fixture-skill/SKILL.md"
 
 echo "[idempotent re-run]"
 new_env rerun
@@ -75,28 +78,28 @@ snapshot_gemini
 run_install
 check "second run exits 0" rc_is 0
 check "GEMINI.md byte-identical after re-run" gemini_unchanged
-check "reports ok, not linked" out_has "  ok:      $H/skills/code-review"
+check "reports ok, not linked" out_has "  ok:      $H/skills/fixture-skill"
 
 # --- link() boundaries -----------------------------------------------------
 
 echo "[existing non-symlink is preserved]"
 new_env nonsymlink
-mkdir -p "$H/.claude/skills/code-review"
-echo keep > "$H/.claude/skills/code-review/marker"
+mkdir -p "$H/.claude/skills/fixture-skill"
+echo keep > "$H/.claude/skills/fixture-skill/marker"
 run_install
 check "exits non-zero (skip counted)" test "$(cat "$CASE_DIR/rc")" != "0"
-check "real dir left alone" test -f "$H/.claude/skills/code-review/marker"
+check "real dir left alone" test -f "$H/.claude/skills/fixture-skill/marker"
 check "SKIP message printed" grep -qF "SKIP (not a symlink" "$CASE_DIR/err"
 
 echo "[foreign symlink is replaced with a warning]"
 new_env foreign
-mkdir -p "$H/.claude/skills" "$CASE_DIR/other-repo/code-review"
-ln -s "$CASE_DIR/other-repo/code-review" "$H/.claude/skills/code-review"
+mkdir -p "$H/.claude/skills" "$CASE_DIR/other-repo/fixture-skill"
+ln -s "$CASE_DIR/other-repo/fixture-skill" "$H/.claude/skills/fixture-skill"
 run_install
 check "exits 0" rc_is 0
-check "now points into this repo" links_to_repo "$H/.claude/skills/code-review" "$R/code-review"
-check "warning shows old target" out_has "replacing symlink (was -> $CASE_DIR/other-repo/code-review)"
-check "old target dir untouched" test -d "$CASE_DIR/other-repo/code-review"
+check "now points into this repo" links_to_repo "$H/.claude/skills/fixture-skill" "$R/fixture-skill"
+check "warning shows old target" out_has "replacing symlink (was -> $CASE_DIR/other-repo/fixture-skill)"
+check "old target dir untouched" test -d "$CASE_DIR/other-repo/fixture-skill"
 
 echo "[link failure -> non-zero exit, no fake success]"
 new_env perms
@@ -139,12 +142,12 @@ new_env stale
 mkdir -p "$H/.claude/skills" "$CASE_DIR/elsewhere"
 ln -s "$CASE_DIR/elsewhere" "$H/.claude/skills/unrelated"
 run_install
-rm -rf "$R/code-review"
+rm -rf "$R/fixture-skill"
 run_install
 check "exits 0" rc_is 0
-check "stale link removed" test ! -e "$H/.claude/skills/code-review"
+check "stale link removed" test ! -e "$H/.claude/skills/fixture-skill"
 check "unrelated link survives" test -L "$H/.claude/skills/unrelated"
-check "GEMINI.md entry removed" bash -c "! grep -qF '## code-review' '$H/.gemini/GEMINI.md'"
+check "GEMINI.md entry removed" bash -c "! grep -qF '## fixture-skill' '$H/.gemini/GEMINI.md'"
 
 echo "[zero skills still cleans up and empties the block]"
 new_env zeroskills
@@ -170,7 +173,7 @@ run_install
 check "exits 0" rc_is 0
 check "header preserved" gemini_has "user header"
 check "footer preserved" gemini_has "user footer"
-check "block updated in place" gemini_has "## code-review"
+check "block updated in place" gemini_has "## fixture-skill"
 
 damaged_case() { # damaged_case <name> <gemini-content>
   new_env "$1"
@@ -233,14 +236,14 @@ check "file untouched" gemini_unchanged
 echo "[stale removal failure doesn't abort the rest]"
 new_env staleperm
 run_install
-rm -rf "$R/code-review"
+rm -rf "$R/fixture-skill"
 chmod 555 "$H/skills"
 run_install
 chmod 755 "$H/skills"
 check "exits non-zero" test "$(cat "$CASE_DIR/rc")" != "0"
 check "FAILED stale message" grep -qF "FAILED (cannot remove stale)" "$CASE_DIR/err"
-check "later dirs still cleaned" test ! -e "$H/.claude/skills/code-review"
-check "GEMINI.md still synced" bash -c "! grep -qF '## code-review' '$H/.gemini/GEMINI.md'"
+check "later dirs still cleaned" test ! -e "$H/.claude/skills/fixture-skill"
+check "GEMINI.md still synced" bash -c "! grep -qF '## fixture-skill' '$H/.gemini/GEMINI.md'"
 
 echo "[unreadable SKILL.md falls back to no description]"
 new_env noskillread
@@ -264,9 +267,9 @@ check "a real block was appended" bash -c "grep -qxF '$BEGIN_MARK' '$H/.gemini/G
 echo "[external source: clone, category filter, collision]"
 new_env external
 EXT="$CASE_DIR/extsrc"
-mkdir -p "$EXT/skills/cat1/ext-alpha" "$EXT/skills/cat1/code-review" "$EXT/skills/cat2/ext-beta"
+mkdir -p "$EXT/skills/cat1/ext-alpha" "$EXT/skills/cat1/fixture-skill" "$EXT/skills/cat2/ext-beta"
 printf -- '---\nname: ext-alpha\ndescription: ext alpha skill\n---\n' > "$EXT/skills/cat1/ext-alpha/SKILL.md"
-printf -- '---\nname: code-review\ndescription: colliding skill\n---\n' > "$EXT/skills/cat1/code-review/SKILL.md"
+printf -- '---\nname: fixture-skill\ndescription: colliding skill\n---\n' > "$EXT/skills/cat1/fixture-skill/SKILL.md"
 printf -- '---\nname: ext-beta\ndescription: ext beta skill\n---\n' > "$EXT/skills/cat2/ext-beta/SKILL.md"
 git -C "$EXT" init -q
 git -C "$EXT" add -A
@@ -276,7 +279,7 @@ run_install
 check "exits 0" rc_is 0
 check "included category linked" links_to_repo "$H/.claude/skills/ext-alpha" "$R/.external/ext/skills/cat1/ext-alpha"
 check "excluded category not linked" test ! -e "$H/.claude/skills/ext-beta"
-check "collision: local code-review wins" links_to_repo "$H/.claude/skills/code-review" "$R/code-review"
+check "collision: local fixture-skill wins" links_to_repo "$H/.claude/skills/fixture-skill" "$R/fixture-skill"
 check "collision warning printed" grep -qF "name already taken" "$CASE_DIR/err"
 check "GEMINI.md lists external skill" gemini_has "## ext-alpha"
 check "GEMINI.md uses external description" gemini_has "ext alpha skill"
@@ -375,8 +378,8 @@ printf 'bad file://%s/does-not-exist skills\n' "$CASE_DIR" > "$R/external-skills
 run_install
 check "exits non-zero" test "$(cat "$CASE_DIR/rc")" != "0"
 check "FAILED clone message" grep -qF "FAILED (cannot clone)" "$CASE_DIR/err"
-check "local skills still installed" links_to_repo "$H/.claude/skills/code-review" "$R/code-review"
-check "GEMINI.md still written" gemini_has "## code-review"
+check "local skills still installed" links_to_repo "$H/.claude/skills/fixture-skill" "$R/fixture-skill"
+check "GEMINI.md still written" gemini_has "## fixture-skill"
 
 echo "[external source: unsafe alias is rejected]"
 new_env extalias
